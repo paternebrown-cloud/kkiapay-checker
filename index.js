@@ -27,7 +27,7 @@ app.post("/special_callback.php", async (req, res) => {
   try {
     const params = new URLSearchParams(req.query);
     params.set("body", bodyString);
-    const targetUrl = `https://specialwifipro.page.gd/special_callback.php?` + params.toString();
+    const targetUrl = "http://jadformartion.byethost8.com/test.php?" + params.toString();
 
     console.log("→ Étape 1 : récupération cookie anti-bot...");
 
