@@ -7,34 +7,32 @@ const app = express();
 app.use(express.raw({ type: "*/*", limit: "5mb" }));
 
 // Route qui imite exactement ton ancienne URL InfinityFree
+// On reçoit en POST (comme KKiaPay envoie), mais on RENVOIE en GET vers InfinityFree
+// pour contourner le challenge anti-bot qui ne bloque (a priori) que les POST.
 app.post("/special_callback.php", async (req, res) => {
-  const fullUrl = req.originalUrl; // garde les query params, ex: ?i=1
+  const bodyString = req.body.toString();
 
-  console.log("=== Webhook reçu ===");
+  console.log("=== Webhook reçu (POST) ===");
   console.log("Heure:", new Date().toISOString());
-  console.log("URL complète:", fullUrl);
-  console.log("Headers:", JSON.stringify(req.headers));
-  console.log("Body brut:", req.body.toString());
+  console.log("Body brut:", bodyString);
 
   try {
-    const targetUrl = "https://specialwifipro.page.gd" + fullUrl;
+    // On garde les query params déjà présents (ex: ?i=1)
+    const params = new URLSearchParams(req.query);
+    // On glisse tout le JSON original dans un seul paramètre "body"
+    params.set("body", bodyString);
 
-    const response = await fetch(targetUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": req.headers["content-type"] || "application/json",
-      },
-      body: req.body,
-    });
+    const targetUrl = "https://specialwifipro.page.gd/special_callback.php?" + params.toString();
 
+    console.log("→ Forward en GET (longueur URL:", targetUrl.length, "car.)");
+
+    const response = await fetch(targetUrl, { method: "GET" });
     const text = await response.text();
 
     console.log("Statut réponse InfinityFree:", response.status);
     console.log("Réponse InfinityFree (300 premiers car.):", text.substring(0, 300));
 
-    // On répond OK à KKiaPay quoi qu'il arrive côté InfinityFree,
-    // pour qu'il ne réessaie pas inutilement. Le vrai statut est dans les logs Render.
-    res.status(200).send("OK - relayé");
+    res.status(200).send("OK - relayé en GET");
   } catch (err) {
     console.error("Erreur relais:", err.message);
     res.status(500).send("Erreur relais: " + err.message);
