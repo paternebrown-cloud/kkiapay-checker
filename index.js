@@ -1,45 +1,85 @@
 import express from "express";
 import fetch from "node-fetch";
+import https from "https";
 
 const app = express();
-
-// On garde le body BRUT (important : KKiaPay envoie du JSON, on ne veut pas le déformer)
 app.use(express.raw({ type: "*/*", limit: "5mb" }));
 
-// Route qui imite exactement ton ancienne URL InfinityFree
-// On reçoit en POST (comme KKiaPay envoie), mais on RENVOIE en GET vers InfinityFree
-// pour contourner le challenge anti-bot qui ne bloque (a priori) que les POST.
+// Agent HTTPS qui ignore les erreurs de cert (InfinityFree parfois capricieux)
+const agent = new https.Agent({ rejectUnauthorized: false });
+
+// Headers qui imitent un vrai navigateur Chrome
+const BROWSER_HEADERS = {
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
+  "Accept-Encoding": "gzip, deflate, br",
+  "Connection": "keep-alive",
+  "Cache-Control": "no-cache",
+  "Pragma": "no-cache",
+};
+
 app.post("/special_callback.php", async (req, res) => {
   const bodyString = req.body.toString();
-
-  console.log("=== Webhook reçu (POST) ===");
-  console.log("Heure:", new Date().toISOString());
-  console.log("Body brut:", bodyString);
+  console.log("=== Webhook reçu ===", new Date().toISOString());
+  console.log("Body:", bodyString);
 
   try {
-    // On garde les query params déjà présents (ex: ?i=1)
     const params = new URLSearchParams(req.query);
-    // On glisse tout le JSON original dans un seul paramètre "body"
     params.set("body", bodyString);
+    const targetUrl = `https://specialwifipro.page.gd/special_callback.php?` + params.toString();
 
-    const targetUrl = "https://specialwifipro.page.gd/special_callback.php?" + params.toString();
+    console.log("→ Étape 1 : récupération cookie anti-bot...");
 
-    console.log("→ Forward en GET (longueur URL:", targetUrl.length, "car.)");
+    // ÉTAPE 1 : première requête pour obtenir le cookie du challenge
+    let cookieJar = "";
+    try {
+      const r1 = await fetch(targetUrl, {
+        method: "GET",
+        headers: BROWSER_HEADERS,
+        agent,
+        redirect: "manual",
+      });
+      const setCookie = r1.headers.raw()["set-cookie"] || [];
+      cookieJar = setCookie.map(c => c.split(";")[0]).join("; ");
+      console.log("Cookies obtenus:", cookieJar || "(aucun)");
+    } catch (e) {
+      console.log("Étape 1 ignorée:", e.message);
+    }
 
-    const response = await fetch(targetUrl, { method: "GET" });
+    // ÉTAPE 2 : vraie requête avec cookie
+    await new Promise(r => setTimeout(r, 800)); // petite pause humaine
+
+    console.log("→ Étape 2 : envoi GET avec cookie...");
+    const response = await fetch(targetUrl, {
+      method: "GET",
+      headers: {
+        ...BROWSER_HEADERS,
+        ...(cookieJar ? { Cookie: cookieJar } : {}),
+        Referer: "https://specialwifipro.page.gd/",
+      },
+      agent,
+    });
+
     const text = await response.text();
+    console.log("Statut:", response.status);
+    console.log("Réponse (300 car.):", text.substring(0, 300));
 
-    console.log("Statut réponse InfinityFree:", response.status);
-    console.log("Réponse InfinityFree (300 premiers car.):", text.substring(0, 300));
+    // Détecte si on a encore le challenge JS
+    if (text.includes("aes.js")) {
+      console.log("⚠️  Challenge anti-bot encore actif — InfinityFree bloque toujours");
+      res.status(200).send("WARN - challenge non résolu");
+    } else {
+      console.log("✅ PHP exécuté correctement");
+      res.status(200).send("OK - relayé");
+    }
 
-    res.status(200).send("OK - relayé en GET");
   } catch (err) {
     console.error("Erreur relais:", err.message);
-    res.status(500).send("Erreur relais: " + err.message);
+    res.status(500).send("Erreur: " + err.message);
   }
 });
 
-// Page de test pour vérifier que le service tourne
 app.get("/", (req, res) => {
   res.send("Relay KKiaPay actif ✅ - " + new Date().toISOString());
 });
